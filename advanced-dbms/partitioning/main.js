@@ -1,10 +1,12 @@
 // index.js
 import { execute } from "./utils.js";
 
-async function createTable() {
-    const query1 = `
-        DROP TABLE IF EXISTS transactions;
-        CREATE TABLE transactions(
+async function createTables() {
+    console.log("Dropping + Creating Tables...");
+
+    const baseTable = `
+        DROP TABLE IF EXISTS transactions CASCADE;
+        CREATE TABLE transactions (
             id BIGINT,
             user_id BIGINT,
             amount DECIMAL,
@@ -13,9 +15,9 @@ async function createTable() {
         );
     `;
 
-    const query2 = `
-        DROP TABLE IF EXISTS transactions_with_partitions;
-        CREATE TABLE transactions_with_partitions(
+    const partitionTable = `
+        DROP TABLE IF EXISTS transactions_with_partitions CASCADE;
+        CREATE TABLE transactions_with_partitions (
             id BIGINT,
             user_id BIGINT,
             amount DECIMAL,
@@ -24,76 +26,133 @@ async function createTable() {
         ) PARTITION BY RANGE (created_at);
     `;
 
-    await execute(query1);
-    console.log("transactions table created");
+    await execute(baseTable);
+    console.log("Base table created");
 
-    await execute(query2);
-    console.log("transactions_with_partitions table created");
+    await execute(partitionTable);
+    console.log("Partitioned table created");
 
-    // Create 2025 Jan partition
-    const p1 = `
-        CREATE TABLE IF NOT EXISTS transactions_2025_01
-        PARTITION OF transactions_with_partitions
-        FOR VALUES FROM ('2025-01-01') TO ('2025-02-01');
-    `;
-    await execute(p1);
-    console.log("Partition created: 2025 Jan");
+    // 3 partitions
+    const partitions = [
+        ["transactions_2025_01", "2025-01-01", "2025-02-01"],
+        ["transactions_2025_02", "2025-02-01", "2025-03-01"],
+        ["transactions_2025_03", "2025-03-01", "2025-04-01"],
+    ];
+
+    for (const [name, from, to] of partitions) {
+        const q = `
+            CREATE TABLE IF NOT EXISTS ${name}
+            PARTITION OF transactions_with_partitions
+            FOR VALUES FROM ('${from}') TO ('${to}');
+        `;
+        await execute(q);
+        console.log(`Partition created: ${name}`);
+    }
 }
 
-async function performanceTest(fn) {
-    const start = performance.now();
-    await fn();
-    const end = performance.now();
-
-    console.log("Time taken:", (end - start).toFixed(3), "ms");
-}
-
-function randomDateJan2025() {
-    const start = new Date("2025-01-01").getTime();
-    const end = new Date("2025-01-31").getTime();
+function randomDate(start, end) {
     return new Date(start + Math.random() * (end - start));
 }
 
 async function seed() {
-    console.log("Seeding 200k rows…");
+    console.log("Seeding 60k rows…");
 
-    for (let i = 0; i < 200000; i++) {
-        const date = randomDateJan2025().toISOString();
+    const ranges = [
+        ["2025-01-01", "2025-01-31"],
+        ["2025-02-01", "2025-02-28"],
+        ["2025-03-01", "2025-03-31"],
+    ];
 
-        const q1 = `
-            INSERT INTO transactions VALUES (
-                ${i}, ${i % 10000}, ${Math.random() * 500}, 'success', '${date}'
-            );
-        `;
-        await execute(q1);
+    let id = 1;
 
-        const q2 = `
-            INSERT INTO transactions_with_partitions VALUES (
-                ${i}, ${i % 10000}, ${Math.random() * 500}, 'success', '${date}'
-            );
-        `;
-        await execute(q2);
+    for (let r of ranges) {
+        let start = new Date(r[0]).getTime();
+        let end = new Date(r[1]).getTime();
+
+        for (let i = 0; i < 20000; i++) {
+            const date = randomDate(start, end).toISOString();
+
+            const q1 = `
+                INSERT INTO transactions VALUES (
+                    ${id}, ${id % 1000}, ${Math.random() * 500}, 'success', '${date}'
+                );
+            `;
+            await execute(q1);
+
+            const q2 = `
+                INSERT INTO transactions_with_partitions VALUES (
+                    ${id}, ${id % 1000}, ${Math.random() * 500}, 'success', '${date}'
+                );
+            `;
+            await execute(q2);
+
+            id++;
+        }
     }
-
-    console.log("Seeding done");
+    console.log("Seeding finished");
 }
 
-async function test() {
-    console.log("\n===== Without Partition =====");
-    const q1 =
-        "SELECT SUM(amount) FROM transactions WHERE created_at BETWEEN '2025-01-01' AND '2025-01-31';";
-    await performanceTest(() => execute(q1));
+async function createIndexes() {
+    console.log("Creating indexes...");
 
-    console.log("\n===== With Partition =====");
-    const q2 =
-        "SELECT SUM(amount) FROM transactions_with_partitions WHERE created_at BETWEEN '2025-01-01' AND '2025-01-31';";
-    await performanceTest(() => execute(q2));
+    const idx1 = `
+        CREATE INDEX IF NOT EXISTS idx_transactions_created
+        ON transactions (created_at);
+    `;
+    await execute(idx1);
+
+    const idx2 = `
+        CREATE INDEX IF NOT EXISTS idx_transactions_part_created
+        ON transactions_with_partitions (created_at);
+    `;
+    await execute(idx2);
+
+    console.log("Indexes created");
+}
+
+async function performanceTest(label, fn) {
+    const start = performance.now();
+    await fn();
+    const end = performance.now();
+    console.log(`${label}: ${(end - start).toFixed(3)} ms`);
+}
+
+async function runTests() {
+    const start = "2025-02-01";
+    const end = "2025-03-01";
+
+    const qBase = `
+        SELECT SUM(amount)
+        FROM transactions
+        WHERE created_at BETWEEN '${start}' AND '${end}';
+    `;
+
+    const qPartition = `
+        SELECT SUM(amount)
+        FROM transactions_with_partitions
+        WHERE created_at BETWEEN '${start}' AND '${end}';
+    `;
+
+    console.log("\n===== PERFORMANCE TESTS =====");
+
+    // 1 — No partitions, no index
+    await performanceTest("1️⃣  Without index & without partitions", () => execute(qBase));
+
+    // 2 — With index (normal table)
+    await performanceTest("2️⃣  With index (no partitions)", () => execute(qBase));
+
+    // 3 — With partitions (no index)
+    await performanceTest("3️⃣  With partitions (no index)", () => execute(qPartition));
+
+    // 4 — With partitions + indexes
+    await performanceTest("4️⃣  With partitions + index", () => execute(qPartition));
 }
 
 async function main() {
-    await createTable();
+    await createTables();
     await seed();
-    await test();
+    await createIndexes();   // add indexes AFTER seeding
+    await runTests();
 }
 
 main();
