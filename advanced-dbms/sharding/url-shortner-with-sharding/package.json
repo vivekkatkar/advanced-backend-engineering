@@ -1,5 +1,5 @@
 {
-  "name": "sharding",
+  "name": "url-shortner-with-sharding",
   "version": "1.0.0",
   "main": "index.js",
   "type": "module",
@@ -13,6 +13,7 @@
   "dependencies": {
     "consistent-hash": "^1.2.2",
     "crypto": "^1.0.1",
+    "express": "^5.2.1",
     "pg": "^8.16.3"
   }
 }
