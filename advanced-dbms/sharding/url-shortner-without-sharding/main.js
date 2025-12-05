@@ -8,6 +8,11 @@ async function createTable(){
     await execute(query);
 }
 
+async function createIndex() {
+    const query = "CREATE INDEX if not exists urlid_index on urltable(urlId);"
+    await execute(query);
+}
+
 function hash(url, length=5){
     return crypto.createHash("sha256").update(url).digest("base64url").slice(0, length);
 }
@@ -55,7 +60,8 @@ export async function getUrl(url){
     }
 }
 
-await createTable();
+// await createTable();
+// await createIndex();
 // const res = await shorten("https://google.com");
 // const newUrl = res.newUrl;
 // console.log(await getUrl(newUrl));
