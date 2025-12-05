@@ -56,6 +56,6 @@ export async function getUrl(url){
 }
 
 await createTable();
-const res = await shorten("https://google.com");
-const newUrl = res.newUrl;
-console.log(await getUrl(newUrl));
+// const res = await shorten("https://google.com");
+// const newUrl = res.newUrl;
+// console.log(await getUrl(newUrl));
